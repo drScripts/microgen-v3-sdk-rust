@@ -1,0 +1,25 @@
+[package]
+name = "microgen-v3-sdk-rust"
+version = "0.1.0"
+edition = "2021"
+description = "Rust SDK for Microgen API - No Code Backend API"
+repository = "https://github.com/mejik-dev/microgen-v3-sdk"
+homepage = "https://microgen.id"
+license = "MIT"
+keywords = ["microgen", "sdk", "backend", "rest", "api", "no-code"]
+categories = ["web-programming::http-client", "api-bindings"]
+
+[dependencies]
+reqwest = { version = "0.12", features = ["json", "multipart"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_qs = "0.13"
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+thiserror = "2"
+log = "0.4"
+
+[lib]
+name = "microgen_v3_sdk_rust"
+path = "src/lib.rs"
