@@ -6,7 +6,7 @@ use std::collections::HashMap;
 // ──────────────────────────────────────────────
 
 /// Configuration passed to [`MicrogenClient`][crate::MicrogenClient].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MicrogenClientOptions {
     /// The unique Microgen API key from your project dashboard.
     pub api_key: String,
@@ -18,18 +18,6 @@ pub struct MicrogenClientOptions {
     pub query_url: Option<String>,
     /// Dedicated streaming URL override.
     pub stream_url: Option<String>,
-}
-
-impl Default for MicrogenClientOptions {
-    fn default() -> Self {
-        Self {
-            api_key: String::new(),
-            host: None,
-            is_secure: None,
-            query_url: None,
-            stream_url: None,
-        }
-    }
 }
 
 impl MicrogenClientOptions {
@@ -149,7 +137,7 @@ pub enum WhereValue {
     /// A plain value (string, number, bool, array, object, null).
     Value(serde_json::Value),
     /// An operator object like `{ "$ne": "…" }`.
-    Operator(FieldFilter),
+    Operator(Box<FieldFilter>),
 }
 
 /// Shortcut for a full `where` clause map.

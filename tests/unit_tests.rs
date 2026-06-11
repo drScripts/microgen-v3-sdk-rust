@@ -84,10 +84,10 @@ fn test_build_find_query_where_operator() {
     let mut where_clause = WhereClause::new();
     where_clause.insert(
         "name".into(),
-        WhereValue::Operator(FieldFilter {
+        WhereValue::Operator(Box::new(FieldFilter {
             ne: Some(json!("Ega")),
             ..Default::default()
-        }),
+        })),
     );
     let opt = FindOption {
         r#where: Some(where_clause),
@@ -104,11 +104,11 @@ fn test_build_find_query_all_operators() {
     let mut where_clause = WhereClause::new();
     where_clause.insert(
         "age".into(),
-        WhereValue::Operator(FieldFilter {
+        WhereValue::Operator(Box::new(FieldFilter {
             gt: Some(json!(10)),
             lt: Some(json!(50)),
             ..Default::default()
-        }),
+        })),
     );
     let opt = FindOption {
         r#where: Some(where_clause),
@@ -124,7 +124,6 @@ fn test_build_find_query_all_operators() {
 
 #[test]
 fn test_build_find_query_or() {
-    use std::collections::HashMap;
     let mut where1 = WhereClause::new();
     where1.insert("name".into(), WhereValue::Value(json!("Ega")));
     let mut where2 = WhereClause::new();
@@ -151,10 +150,10 @@ fn test_build_find_query_qs_output() {
     let mut where_clause = WhereClause::new();
     where_clause.insert(
         "name".into(),
-        WhereValue::Operator(FieldFilter {
+        WhereValue::Operator(Box::new(FieldFilter {
             ne: Some(json!("Ega")),
             ..Default::default()
-        }),
+        })),
     );
     let opt = FindOption {
         skip: Some(0),
@@ -377,10 +376,10 @@ fn test_where_value_plain() {
 
 #[test]
 fn test_where_value_operator() {
-    let wv = WhereValue::Operator(FieldFilter {
+    let wv = WhereValue::Operator(Box::new(FieldFilter {
         r#in: Some(json!(["a", "b"])),
         ..Default::default()
-    });
+    }));
     let val = serde_json::to_value(&wv).unwrap();
     assert_eq!(val["$in"], json!(["a", "b"]));
 }

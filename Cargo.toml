@@ -20,6 +20,12 @@ futures-util = "0.3"
 thiserror = "2"
 log = "0.4"
 
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = 10 }
+
 [lib]
 name = "microgen_v3_sdk_rust"
 path = "src/lib.rs"

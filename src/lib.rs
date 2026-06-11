@@ -1,3 +1,5 @@
+#![deny(unsafe_code)]
+
 //! # Microgen Rust SDK
 //!
 //! Unofficial Rust client for [Microgen](https://microgen.id) – a no-code backend API.

@@ -87,7 +87,8 @@ impl AuthClient {
         let mut url_str = format!("{}{}", self.base_url, path);
         if let Some(q) = query {
             if !q.is_empty() {
-                let qs = serde_qs::to_string(q).unwrap_or_default();
+                let qs = serde_qs::to_string(q)
+                    .map_err(|e| MicrogenError::InvalidArgument(e.to_string()))?;
                 url_str.push('?');
                 url_str.push_str(&qs);
             }

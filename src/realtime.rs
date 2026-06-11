@@ -75,7 +75,8 @@ impl RealtimeClient {
     ) -> Result<()> {
         let mut channel = format!("query:{}:{}", table_id, event);
         if let Some(w) = where_filter {
-            let qs = serde_qs::to_string(w).unwrap_or_default();
+            let qs = serde_qs::to_string(w)
+                .unwrap_or_default();
             if !qs.is_empty() {
                 channel.push(':');
                 channel.push_str(&qs);

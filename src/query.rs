@@ -1,14 +1,15 @@
 use crate::auth::check_status;
-use crate::error::Result;
+use crate::error::{MicrogenError, Result};
 use crate::field::FieldClient;
 use crate::types::*;
 use reqwest::Client;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 /// CRUD client for a single table / service.
 pub struct QueryClient {
     client: Client,
     table_url: String,
-    headers: reqwest::header::HeaderMap,
+    headers: HeaderMap,
     /// Field (schema) sub-client.
     pub field: FieldClient,
 }
@@ -18,7 +19,7 @@ impl QueryClient {
         client: Client,
         table_name: &str,
         base_url: &str,
-        headers: reqwest::header::HeaderMap,
+        headers: HeaderMap,
     ) -> Self {
         let table_url = format!("{}/{}", base_url, table_name);
         let field = FieldClient::new(
@@ -36,12 +37,13 @@ impl QueryClient {
 
     // ── query-string helpers ─────────────────────────────
 
-    fn build_url(&self, query: &serde_json::Map<String, serde_json::Value>) -> String {
+    fn build_url(&self, query: &serde_json::Map<String, serde_json::Value>) -> Result<String> {
         if query.is_empty() {
-            self.table_url.clone()
+            Ok(self.table_url.clone())
         } else {
-            let qs = serde_qs::to_string(query).unwrap_or_default();
-            format!("{}?{}", self.table_url, qs)
+            let qs = serde_qs::to_string(query)
+                .map_err(|e| MicrogenError::InvalidArgument(e.to_string()))?;
+            Ok(format!("{}?{}", self.table_url, qs))
         }
     }
 
@@ -49,29 +51,49 @@ impl QueryClient {
         &self,
         id: &str,
         query: &serde_json::Map<String, serde_json::Value>,
-    ) -> String {
+    ) -> Result<String> {
         let base = format!("{}/{}", self.table_url, id);
         if query.is_empty() {
-            base
+            Ok(base)
         } else {
-            let qs = serde_qs::to_string(query).unwrap_or_default();
-            format!("{}?{}", base, qs)
+            let qs = serde_qs::to_string(query)
+                .map_err(|e| MicrogenError::InvalidArgument(e.to_string()))?;
+            Ok(format!("{}?{}", base, qs))
         }
     }
 
-    fn auth_headers(&self, token: Option<&str>) -> reqwest::header::HeaderMap {
+    fn auth_headers(&self, token: Option<&str>) -> Result<HeaderMap> {
         let mut h = self.headers.clone();
         if let Some(t) = token {
-            h.insert(
-                reqwest::header::AUTHORIZATION,
-                format!("Bearer {}", t).parse().unwrap(),
-            );
+            let value = HeaderValue::from_str(&format!("Bearer {}", t))
+                .map_err(|e| MicrogenError::InvalidArgument(e.to_string()))?;
+            h.insert(reqwest::header::AUTHORIZATION, value);
         }
-        h
+        Ok(h)
     }
 
-    fn bulk_header() -> reqwest::header::HeaderName {
-        reqwest::header::HeaderName::from_static("x-bulk-response-type")
+    /// Static header name for bulk response type.
+    fn bulk_header() -> HeaderName {
+        HeaderName::from_static("x-bulk-response-type")
+    }
+
+    /// Apply the optional bulk behavior header to a HeaderMap.
+    fn apply_bulk_behavior(h: &mut HeaderMap, bulk_behavior: Option<BulkBehavior>) {
+        if let Some(b) = bulk_behavior {
+            h.insert(Self::bulk_header(), HeaderValue::from_static(b.as_header_value()));
+        }
+    }
+
+    /// Known HTTP extension method for linking records.
+    fn method_link() -> reqwest::Method {
+        reqwest::Method::from_bytes(b"LINK")
+            .expect("'LINK' is a valid HTTP extension method")
+    }
+
+    /// Known HTTP extension method for unlinking records.
+    fn method_unlink() -> reqwest::Method {
+        reqwest::Method::from_bytes(b"UNLINK")
+            .expect("'UNLINK' is a valid HTTP extension method")
     }
 
     // ── public API ───────────────────────────────────────
@@ -83,11 +105,11 @@ impl QueryClient {
         token: Option<&str>,
     ) -> Result<MicrogenResponse<T>> {
         let query = option.map(build_find_query).unwrap_or_default();
-        let url = self.build_url(&query);
+        let url = self.build_url(&query)?;
         let resp = self
             .client
             .get(&url)
-            .headers(self.auth_headers(token))
+            .headers(self.auth_headers(token)?)
             .send()
             .await?;
         let resp = check_status(resp).await?;
@@ -119,11 +141,11 @@ impl QueryClient {
         token: Option<&str>,
     ) -> Result<MicrogenSingleResponse<T>> {
         let query = option.map(build_get_by_id_query).unwrap_or_default();
-        let url = self.build_url_id(id, &query);
+        let url = self.build_url_id(id, &query)?;
         let resp = self
             .client
             .get(&url)
-            .headers(self.auth_headers(token))
+            .headers(self.auth_headers(token)?)
             .send()
             .await?;
         let resp = check_status(resp).await?;
@@ -140,7 +162,7 @@ impl QueryClient {
         let resp = self
             .client
             .post(&self.table_url)
-            .headers(self.auth_headers(token))
+            .headers(self.auth_headers(token)?)
             .json(body)
             .send()
             .await?;
@@ -159,10 +181,8 @@ impl QueryClient {
         token: Option<&str>,
         bulk_behavior: Option<BulkBehavior>,
     ) -> Result<MicrogenResponse<T>> {
-        let mut h = self.auth_headers(token);
-        if let Some(b) = bulk_behavior {
-            h.insert(Self::bulk_header(), b.as_header_value().parse().unwrap());
-        }
+        let mut h = self.auth_headers(token)?;
+        Self::apply_bulk_behavior(&mut h, bulk_behavior);
         let resp = self
             .client
             .post(&self.table_url)
@@ -190,7 +210,7 @@ impl QueryClient {
         let resp = self
             .client
             .patch(&url)
-            .headers(self.auth_headers(token))
+            .headers(self.auth_headers(token)?)
             .json(body)
             .send()
             .await?;
@@ -209,10 +229,8 @@ impl QueryClient {
         token: Option<&str>,
         bulk_behavior: Option<BulkBehavior>,
     ) -> Result<MicrogenResponse<T>> {
-        let mut h = self.auth_headers(token);
-        if let Some(b) = bulk_behavior {
-            h.insert(Self::bulk_header(), b.as_header_value().parse().unwrap());
-        }
+        let mut h = self.auth_headers(token)?;
+        Self::apply_bulk_behavior(&mut h, bulk_behavior);
         let resp = self
             .client
             .patch(&self.table_url)
@@ -239,7 +257,7 @@ impl QueryClient {
         let resp = self
             .client
             .delete(&url)
-            .headers(self.auth_headers(token))
+            .headers(self.auth_headers(token)?)
             .send()
             .await?;
         let resp = check_status(resp).await?;
@@ -257,10 +275,8 @@ impl QueryClient {
         token: Option<&str>,
         bulk_behavior: Option<BulkBehavior>,
     ) -> Result<MicrogenResponse<T>> {
-        let mut h = self.auth_headers(token);
-        if let Some(b) = bulk_behavior {
-            h.insert(Self::bulk_header(), b.as_header_value().parse().unwrap());
-        }
+        let mut h = self.auth_headers(token)?;
+        Self::apply_bulk_behavior(&mut h, bulk_behavior);
         let record_ids = ids.join(",");
         let url = format!("{}?recordIds={}", self.table_url, record_ids);
         let resp = self
@@ -288,8 +304,8 @@ impl QueryClient {
         let url = format!("{}/{}", self.table_url, id);
         let resp = self
             .client
-            .request(reqwest::Method::from_bytes(b"LINK").unwrap(), &url)
-            .headers(self.auth_headers(token))
+            .request(Self::method_link(), &url)
+            .headers(self.auth_headers(token)?)
             .json(body)
             .send()
             .await?;
@@ -308,8 +324,8 @@ impl QueryClient {
         let url = format!("{}/{}", self.table_url, id);
         let resp = self
             .client
-            .request(reqwest::Method::from_bytes(b"UNLINK").unwrap(), &url)
-            .headers(self.auth_headers(token))
+            .request(Self::method_unlink(), &url)
+            .headers(self.auth_headers(token)?)
             .json(body)
             .send()
             .await?;
@@ -328,13 +344,14 @@ impl QueryClient {
         let url = if query.is_empty() {
             format!("{}/count", self.table_url)
         } else {
-            let qs = serde_qs::to_string(&query).unwrap_or_default();
+            let qs = serde_qs::to_string(&query)
+                .map_err(|e| MicrogenError::InvalidArgument(e.to_string()))?;
             format!("{}/count?{}", self.table_url, qs)
         };
         let resp = self
             .client
             .get(&url)
-            .headers(self.auth_headers(token))
+            .headers(self.auth_headers(token)?)
             .send()
             .await?;
         let resp = check_status(resp).await?;

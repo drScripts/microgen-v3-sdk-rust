@@ -1,50 +1,27 @@
-use std::fmt;
+use thiserror::Error;
 
 /// Unified error type for the Microgen SDK.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum MicrogenError {
     /// The API returned a non-success HTTP status.
+    #[error("API error ({status}): {message} — {body}")]
     Api {
         status: u16,
         message: String,
         body: String,
     },
     /// An error from the reqwest HTTP client.
-    Request(reqwest::Error),
+    #[error("HTTP request error: {0}")]
+    Request(#[from] reqwest::Error),
     /// An error during JSON serialization/deserialization.
-    Serde(serde_json::Error),
+    #[error("Serialization error: {0}")]
+    Serde(#[from] serde_json::Error),
     /// WebSocket connection or protocol error.
+    #[error("WebSocket error: {0}")]
     WebSocket(String),
     /// Invalid configuration or arguments.
+    #[error("Invalid argument: {0}")]
     InvalidArgument(String),
-}
-
-impl fmt::Display for MicrogenError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Api { status, message, body } => {
-                write!(f, "API error ({}): {} — {}", status, message, body)
-            }
-            Self::Request(e) => write!(f, "HTTP request error: {}", e),
-            Self::Serde(e) => write!(f, "Serialization error: {}", e),
-            Self::WebSocket(msg) => write!(f, "WebSocket error: {}", msg),
-            Self::InvalidArgument(msg) => write!(f, "Invalid argument: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for MicrogenError {}
-
-impl From<reqwest::Error> for MicrogenError {
-    fn from(e: reqwest::Error) -> Self {
-        Self::Request(e)
-    }
-}
-
-impl From<serde_json::Error> for MicrogenError {
-    fn from(e: serde_json::Error) -> Self {
-        Self::Serde(e)
-    }
 }
 
 pub type Result<T> = std::result::Result<T, MicrogenError>;
