@@ -2,6 +2,7 @@ use crate::auth::AuthClient;
 use crate::query::QueryClient;
 use crate::realtime::RealtimeClient;
 use crate::storage::StorageClient;
+use crate::transaction::TransactionClient;
 use crate::types::MicrogenClientOptions;
 use std::sync::{Arc, Mutex};
 
@@ -34,6 +35,8 @@ pub struct MicrogenClient {
     pub realtime: RealtimeClient,
     /// File storage client.
     pub storage: StorageClient,
+    /// Session / transaction client.
+    pub transactions: TransactionClient,
     query_url: String,
     http_client: reqwest::Client,
 }
@@ -64,7 +67,7 @@ impl MicrogenClient {
 
         let http_client = reqwest::Client::new();
 
-        // Shared token storage across AuthClient and StorageClient
+        // Shared token storage across AuthClient, StorageClient, and TransactionClient
         let token_storage: Arc<Mutex<Option<String>>> =
             Arc::new(Mutex::new(None));
 
@@ -81,12 +84,20 @@ impl MicrogenClient {
         );
 
         let storage_base = format!("{}/storage", full_query_url);
-        let storage = StorageClient::new(http_client.clone(), storage_base, token_storage);
+        let storage = StorageClient::new(http_client.clone(), storage_base, token_storage.clone());
+
+        let txn_base_url = full_query_url.clone();
+        let transactions = TransactionClient::new(
+            http_client.clone(),
+            txn_base_url,
+            token_storage.clone(),
+        );
 
         Self {
             auth,
             realtime,
             storage,
+            transactions,
             query_url: full_query_url,
             http_client,
         }

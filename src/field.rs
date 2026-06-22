@@ -5,6 +5,7 @@ use reqwest::Client;
 use serde::Deserialize;
 
 /// Schema (field definition) client for a table.
+#[derive(Clone)]
 pub struct FieldClient {
     client: Client,
     fields_url: String,

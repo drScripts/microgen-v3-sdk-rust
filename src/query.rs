@@ -6,12 +6,53 @@ use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 /// CRUD client for a single table / service.
+///
+/// Every method accepts an optional bearer `token` for authenticated requests.
+///
+/// ## Transaction support
+///
+/// Call [`QueryClient::with_txn`] to return a copy of this client that
+/// automatically appends `?sid=…&txn=…` to every request URL, allowing
+/// all subsequent CRUD operations to run inside a database transaction.
+///
+/// > **Note:** Creating a session / transaction, committing, and aborting
+/// > all require authentication (via [`AuthClient`](crate::AuthClient)).
+/// > The bearer token is shared automatically after `mg.auth.login(…)`.
+///
+/// ```rust,no_run
+/// use microgen_v3_sdk_rust::{MicrogenClient, MicrogenClientOptions};
+///
+/// # async fn example() {
+/// let mg = MicrogenClient::new(MicrogenClientOptions::new("my-api-key"));
+///
+/// // 0. Authenticate first — token shared automatically
+/// mg.auth.login::<serde_json::Value>(&serde_json::json!({
+///     "email": "user@example.com",
+///     "password": "secret",
+/// })).await.unwrap();
+///
+/// // 1. Create session + transaction
+/// let session = mg.transactions.create_session().await.unwrap();
+/// let txn = mg.transactions.create_transaction(&session).await.unwrap();
+///
+/// // 2. Wrap the service client
+/// let svc = mg.service("posts").with_txn(&session.id, &txn.id);
+///
+/// // 3. All CRUD now runs inside the transaction
+/// let result = svc.find::<serde_json::Value>(None, None).await.unwrap();
+/// # }
+/// ```
+#[derive(Clone)]
 pub struct QueryClient {
     client: Client,
     table_url: String,
     headers: HeaderMap,
     /// Field (schema) sub-client.
     pub field: FieldClient,
+    /// Optional session ID for transactional operations.
+    session_id: Option<String>,
+    /// Optional transaction ID for transactional operations.
+    transaction_id: Option<String>,
 }
 
 impl QueryClient {
@@ -32,16 +73,57 @@ impl QueryClient {
             table_url,
             headers,
             field,
+            session_id: None,
+            transaction_id: None,
+        }
+    }
+
+    /// Return a copy of this client configured to run all CRUD operations
+    /// inside the given session + transaction.
+    ///
+    /// Every subsequent `find`, `create`, `update_by_id`, … call will
+    /// automatically append `?sid={session_id}&txn={txn_id}` to the URL.
+    pub fn with_txn(&self, session_id: &str, txn_id: &str) -> Self {
+        Self {
+            client: self.client.clone(),
+            table_url: self.table_url.clone(),
+            headers: self.headers.clone(),
+            field: self.field.clone(),
+            session_id: Some(session_id.to_string()),
+            transaction_id: Some(txn_id.to_string()),
+        }
+    }
+
+    /// Append `?sid=…&txn=…` to `url` when a session/transaction context is active.
+    fn append_txn_params(&self, url: &str) -> String {
+        if let (Some(sid), Some(txn)) = (&self.session_id, &self.transaction_id) {
+            let sep = if url.contains('?') { "&" } else { "?" };
+            format!("{}{}sid={}&txn={}", url, sep, sid, txn)
+        } else {
+            url.to_string()
+        }
+    }
+
+    /// Insert `sid` / `txn` into a query-parameter map when a
+    /// session/transaction context is active.
+    fn add_txn_to_map(&self, map: &mut serde_json::Map<String, serde_json::Value>) {
+        if let Some(ref sid) = self.session_id {
+            map.insert("sid".into(), serde_json::json!(sid));
+        }
+        if let Some(ref txn) = self.transaction_id {
+            map.insert("txn".into(), serde_json::json!(txn));
         }
     }
 
     // ── query-string helpers ─────────────────────────────
 
     fn build_url(&self, query: &serde_json::Map<String, serde_json::Value>) -> Result<String> {
-        if query.is_empty() {
+        let mut q = query.clone();
+        self.add_txn_to_map(&mut q);
+        if q.is_empty() {
             Ok(self.table_url.clone())
         } else {
-            let qs = serde_qs::to_string(query)
+            let qs = serde_qs::to_string(&q)
                 .map_err(|e| MicrogenError::InvalidArgument(e.to_string()))?;
             Ok(format!("{}?{}", self.table_url, qs))
         }
@@ -53,10 +135,12 @@ impl QueryClient {
         query: &serde_json::Map<String, serde_json::Value>,
     ) -> Result<String> {
         let base = format!("{}/{}", self.table_url, id);
-        if query.is_empty() {
+        let mut q = query.clone();
+        self.add_txn_to_map(&mut q);
+        if q.is_empty() {
             Ok(base)
         } else {
-            let qs = serde_qs::to_string(query)
+            let qs = serde_qs::to_string(&q)
                 .map_err(|e| MicrogenError::InvalidArgument(e.to_string()))?;
             Ok(format!("{}?{}", base, qs))
         }
@@ -159,9 +243,10 @@ impl QueryClient {
         body: &impl serde::Serialize,
         token: Option<&str>,
     ) -> Result<MicrogenSingleResponse<T>> {
+        let url = self.append_txn_params(&self.table_url);
         let resp = self
             .client
-            .post(&self.table_url)
+            .post(&url)
             .headers(self.auth_headers(token)?)
             .json(body)
             .send()
@@ -183,9 +268,10 @@ impl QueryClient {
     ) -> Result<MicrogenResponse<T>> {
         let mut h = self.auth_headers(token)?;
         Self::apply_bulk_behavior(&mut h, bulk_behavior);
+        let url = self.append_txn_params(&self.table_url);
         let resp = self
             .client
-            .post(&self.table_url)
+            .post(&url)
             .headers(h)
             .json(body)
             .send()
@@ -206,7 +292,7 @@ impl QueryClient {
         body: &impl serde::Serialize,
         token: Option<&str>,
     ) -> Result<MicrogenSingleResponse<T>> {
-        let url = format!("{}/{}", self.table_url, id);
+        let url = self.append_txn_params(&format!("{}/{}", self.table_url, id));
         let resp = self
             .client
             .patch(&url)
@@ -231,9 +317,10 @@ impl QueryClient {
     ) -> Result<MicrogenResponse<T>> {
         let mut h = self.auth_headers(token)?;
         Self::apply_bulk_behavior(&mut h, bulk_behavior);
+        let url = self.append_txn_params(&self.table_url);
         let resp = self
             .client
-            .patch(&self.table_url)
+            .patch(&url)
             .headers(h)
             .json(body)
             .send()
@@ -253,7 +340,7 @@ impl QueryClient {
         id: &str,
         token: Option<&str>,
     ) -> Result<MicrogenSingleResponse<T>> {
-        let url = format!("{}/{}", self.table_url, id);
+        let url = self.append_txn_params(&format!("{}/{}", self.table_url, id));
         let resp = self
             .client
             .delete(&url)
@@ -278,7 +365,8 @@ impl QueryClient {
         let mut h = self.auth_headers(token)?;
         Self::apply_bulk_behavior(&mut h, bulk_behavior);
         let record_ids = ids.join(",");
-        let url = format!("{}?recordIds={}", self.table_url, record_ids);
+        let base = format!("{}?recordIds={}", self.table_url, record_ids);
+        let url = self.append_txn_params(&base);
         let resp = self
             .client
             .delete(&url)
@@ -301,7 +389,7 @@ impl QueryClient {
         body: &impl serde::Serialize,
         token: Option<&str>,
     ) -> Result<MicrogenSingleResponse<T>> {
-        let url = format!("{}/{}", self.table_url, id);
+        let url = self.append_txn_params(&format!("{}/{}", self.table_url, id));
         let resp = self
             .client
             .request(Self::method_link(), &url)
@@ -321,7 +409,7 @@ impl QueryClient {
         body: &impl serde::Serialize,
         token: Option<&str>,
     ) -> Result<MicrogenSingleResponse<T>> {
-        let url = format!("{}/{}", self.table_url, id);
+        let url = self.append_txn_params(&format!("{}/{}", self.table_url, id));
         let resp = self
             .client
             .request(Self::method_unlink(), &url)
@@ -341,13 +429,14 @@ impl QueryClient {
         token: Option<&str>,
     ) -> Result<MicrogenCountResponse> {
         let query = option.map(build_count_query).unwrap_or_default();
-        let url = if query.is_empty() {
+        let base = if query.is_empty() {
             format!("{}/count", self.table_url)
         } else {
             let qs = serde_qs::to_string(&query)
                 .map_err(|e| MicrogenError::InvalidArgument(e.to_string()))?;
             format!("{}/count?{}", self.table_url, qs)
         };
+        let url = self.append_txn_params(&base);
         let resp = self
             .client
             .get(&url)
