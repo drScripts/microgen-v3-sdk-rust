@@ -59,7 +59,10 @@ impl MicrogenClient {
         let query_url = options
             .query_url
             .unwrap_or_else(|| format!("{}://database-query.{}/api/v1/", scheme, host));
-        let full_query_url = format!("{}{}", query_url, options.api_key);
+        // Ensure query_url ends with "/" before appending API key,
+        // so both "…/api/v1" and "…/api/v1/" work correctly.
+        let base = query_url.trim_end_matches('/');
+        let full_query_url = format!("{}/{}", base, options.api_key);
 
         let stream_url = options
             .stream_url

@@ -59,6 +59,7 @@ impl AuthClient {
         body: &B,
     ) -> Result<R> {
         let url = format!("{}{}", self.base_url, path);
+        eprintln!("DEBUG [microgen-sdk] post_json URL: {url}");
         let resp = self.client.post(&url).json(body).send().await?;
         let resp = check_status(resp).await?;
         Ok(resp.json().await?)
